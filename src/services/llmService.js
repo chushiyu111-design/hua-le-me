@@ -9,12 +9,31 @@
 
 // ──────────── 通用工具函数 ────────────
 
+const DEFAULT_TIMEOUT = 30000 // 30秒超时
+
+/** 带超时的 fetch 封装 */
+async function fetchWithTimeout(url, options = {}, timeout = DEFAULT_TIMEOUT) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeout)
+    try {
+        const res = await fetch(url, { ...options, signal: controller.signal })
+        return res
+    } catch (e) {
+        if (e.name === 'AbortError') {
+            throw new Error(`请求超时（${Math.round(timeout / 1000)}秒），请检查网络或 API 地址`)
+        }
+        throw e
+    } finally {
+        clearTimeout(timer)
+    }
+}
+
 /** 拉取模型列表 */
 export async function fetchModels(baseUrl, apiKey) {
     const url = `${baseUrl.replace(/\/+$/, '')}/v1/models`
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
         headers: { 'Authorization': `Bearer ${apiKey}` }
-    })
+    }, 15000)
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
     const data = await res.json()
     return (data.data || []).map(m => m.id).sort()
@@ -23,7 +42,7 @@ export async function fetchModels(baseUrl, apiKey) {
 /** 测试连接 */
 export async function testConnection(baseUrl, apiKey, model) {
     const url = `${baseUrl.replace(/\/+$/, '')}/v1/chat/completions`
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -34,7 +53,7 @@ export async function testConnection(baseUrl, apiKey, model) {
             messages: [{ role: 'user', content: '请回复"OK"' }],
             max_tokens: 10
         })
-    })
+    }, 15000)
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
     const data = await res.json()
     return data.choices?.[0]?.message?.content || 'OK'
@@ -100,7 +119,7 @@ export async function extractIntent(baseUrl, apiKey, model, text, categories, ac
     ]
 
     const url = `${baseUrl.replace(/\/+$/, '')}/v1/chat/completions`
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -209,7 +228,7 @@ ${contextBlock}
     ]
 
     const url = `${baseUrl.replace(/\/+$/, '')}/v1/chat/completions`
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -362,7 +381,7 @@ ${reportData.moodSummary || '暂无情绪数据'}
 请用你的人设风格给我来个精彩的财务锐评吧！`
 
     const url = `${baseUrl.replace(/\/+$/, '')}/v1/chat/completions`
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',

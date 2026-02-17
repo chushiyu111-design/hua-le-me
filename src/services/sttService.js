@@ -53,12 +53,31 @@ export function useBrowserSTT() {
 
 // ─── API 模式：OpenAI 兼容 Whisper ───
 
+const STT_TIMEOUT = 30000 // 30秒超时
+
+/** 带超时的 fetch 封装 */
+async function fetchWithTimeout(url, options = {}, timeout = STT_TIMEOUT) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeout)
+    try {
+        const res = await fetch(url, { ...options, signal: controller.signal })
+        return res
+    } catch (e) {
+        if (e.name === 'AbortError') {
+            throw new Error(`语音请求超时（${Math.round(timeout / 1000)}秒），请检查网络或 API 地址`)
+        }
+        throw e
+    } finally {
+        clearTimeout(timer)
+    }
+}
+
 /** 拉取 STT 可用模型 */
 export async function fetchSTTModels(baseUrl, apiKey) {
     const url = `${baseUrl.replace(/\/+$/, '')}/v1/models`
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
         headers: { 'Authorization': `Bearer ${apiKey}` }
-    })
+    }, 15000)
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
     const data = await res.json()
     // 过滤名称中含 whisper / stt / audio 的模型
@@ -77,7 +96,7 @@ export async function transcribeAudio(baseUrl, apiKey, model, audioBlob) {
     formData.append('model', model)
     formData.append('language', 'zh')
 
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}` },
         body: formData

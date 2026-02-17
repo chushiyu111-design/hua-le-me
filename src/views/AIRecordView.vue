@@ -421,7 +421,6 @@ async function sendMessage(opts = {}) {
     // ── 阶段二：模型2 角色回复（如已配置）──
     if (appStore.isLLM2Configured()) {
       messages.value[aiIdx].phase = 'respond'
-      // 不需要重新标记 loading=true，它还在 loading 状态
       scrollToBottom()
 
       try {
@@ -434,16 +433,21 @@ async function sendMessage(opts = {}) {
       } catch (e2) {
         // 模型2 失败不影响记账卡片的显示
         console.warn('模型2回复失败:', e2.message)
-        // 如果是 chat 意图且模型2失败，设置一个默认回复
         if (intentResult.intent === 'chat') {
           messages.value[aiIdx].responseText = '回复生成失败了，不过我还在呢～'
+        } else {
+          // 记账模式下模型2失败，给一个简单确认
+          messages.value[aiIdx].responseText = `已识别 ${intentResult.records?.length || 0} 笔记录，请确认保存吧～`
         }
       }
     } else {
       // 模型2 未配置
       if (intentResult.intent === 'accounting') {
-        // 记账模式：卡片已经有了，不需要回复
         chatHistory.value.push({ role: 'assistant', content: JSON.stringify(intentResult) })
+        // 给一个简单的确认回复，避免 AI 气泡完全无文字
+        if (intentResult.records?.length > 0) {
+          messages.value[aiIdx].responseText = `已识别 ${intentResult.records.length} 笔记录，请确认后保存吧～`
+        }
       }
       // chat 模式：会显示降级提示文本
     }
@@ -452,9 +456,10 @@ async function sendMessage(opts = {}) {
   } catch (e) {
     messages.value[aiIdx].loading = false
     messages.value[aiIdx].error = `解析失败: ${e.message}`
+  } finally {
+    isSending.value = false
+    scrollToBottom()
   }
-  isSending.value = false
-  scrollToBottom()
 }
 
 // ── 重新生成（re-roll）──
@@ -520,11 +525,16 @@ async function rerollMessage(aiMsgIndex) {
         console.warn('模型2回复失败:', e2.message)
         if (intentResult.intent === 'chat') {
           messages.value[newAiIdx].responseText = '回复生成失败了，不过我还在呢～'
+        } else {
+          messages.value[newAiIdx].responseText = `已识别 ${intentResult.records?.length || 0} 笔记录，请确认保存吧～`
         }
       }
     } else {
       if (intentResult.intent === 'accounting') {
         chatHistory.value.push({ role: 'assistant', content: JSON.stringify(intentResult) })
+        if (intentResult.records?.length > 0) {
+          messages.value[newAiIdx].responseText = `已识别 ${intentResult.records.length} 笔记录，请确认后保存吧～`
+        }
       }
     }
 
@@ -532,9 +542,10 @@ async function rerollMessage(aiMsgIndex) {
   } catch (e) {
     messages.value[newAiIdx].loading = false
     messages.value[newAiIdx].error = `解析失败: ${e.message}`
+  } finally {
+    isSending.value = false
+    scrollToBottom()
   }
-  isSending.value = false
-  scrollToBottom()
 }
 
 // ── 保存记录（手动） ──
@@ -726,7 +737,7 @@ async function stopVoice() {
   color: #fff; border-bottom-right-radius: var(--space-xs);
 }
 .msg-bubble--user .voice-bubble {
-  margin: calc(var(--space-sm) * -1) calc(var(--space-md) * -1);
+  margin: 0;
 }
 .msg-bubble--ai {
   background: var(--bg-card); box-shadow: var(--shadow-sm);
