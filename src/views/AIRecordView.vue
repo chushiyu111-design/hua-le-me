@@ -36,7 +36,34 @@
           </div>
           <div class="msg-bubble" :class="`msg-bubble--${msg.role}`">
             <!-- 用户消息 -->
-            <p v-if="msg.role === 'user'" class="msg-text">{{ msg.text }}</p>
+            <template v-if="msg.role === 'user'">
+              <!-- 语音条消息 -->
+              <div v-if="msg.type === 'voice'" class="voice-bubble" @click="toggleVoiceExpand(msg)">
+                <div class="voice-bubble__main">
+                  <div class="voice-bubble__icon" :class="{ 'voice-bubble__icon--expanded': msg.expanded }">
+                    <BaseIcon name="voice-wave" :size="18" color="#fff" />
+                  </div>
+                  <div class="voice-bubble__bars">
+                    <span v-for="n in barCount(msg.duration)" :key="n" class="voice-bar"
+                      :style="{ height: barHeight(n, msg.duration) + 'px', animationDelay: (n * 0.05) + 's' }"
+                    ></span>
+                  </div>
+                  <span class="voice-bubble__duration">{{ msg.duration }}″</span>
+                </div>
+                <!-- 展开后显示文字 -->
+                <transition name="voice-text-slide">
+                  <div v-if="msg.expanded" class="voice-bubble__text">
+                    <p>{{ msg.text }}</p>
+                    <button class="voice-edit-btn" @click.stop="editVoiceText(msg, i)">
+                      <BaseIcon name="edit" :size="12" color="var(--pink-deep)" />
+                      <span>编辑</span>
+                    </button>
+                  </div>
+                </transition>
+              </div>
+              <!-- 普通文字消息 -->
+              <p v-else class="msg-text">{{ msg.text }}</p>
+            </template>
             <!-- AI 解析结果 -->
             <template v-else>
               <p v-if="msg.loading" class="msg-text msg-loading">
@@ -109,8 +136,26 @@
         </div>
       </div>
 
+      <!-- 录音状态指示器 -->
+      <transition name="rec-indicator">
+        <div v-if="isRecording" class="recording-indicator">
+          <div class="recording-indicator__pulse"></div>
+          <div class="recording-indicator__content">
+            <div class="recording-indicator__waves">
+              <span v-for="n in 5" :key="n" class="rec-wave-bar"
+                :style="{ animationDelay: (n * 0.12) + 's' }"
+              ></span>
+            </div>
+            <span class="recording-indicator__time">{{ formatDuration(recordingDuration) }}</span>
+          </div>
+          <button class="recording-stop-btn" @click="stopVoice">
+            <BaseIcon name="check" :size="18" color="#fff" />
+          </button>
+        </div>
+      </transition>
+
       <!-- 输入区 -->
-      <div class="input-bar">
+      <div class="input-bar" :class="{ 'input-bar--hidden': isRecording }">
         <button class="mic-btn" :class="{ 'mic-btn--active': isRecording }" @click="toggleVoice">
           <BaseIcon :name="isRecording ? 'mic' : 'mic'" :size="22" :color="isRecording ? '#fff' : 'var(--pink)'" />
         </button>
@@ -136,7 +181,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useAppStore } from '@/stores/appStore'
 import { useRecords } from '@/composables/useRecords'
 import { useCategories } from '@/composables/useCategories'
@@ -157,9 +202,65 @@ const inputText = ref('')
 const messages = ref([])
 const isSending = ref(false)
 const isRecording = ref(false)
-const isComposing = ref(false)  // 中文输入法 composing 状态
+const isComposing = ref(false)
 const chatArea = ref(null)
-const chatHistory = ref([])  // 维护对话历史用于上下文
+const chatHistory = ref([])
+
+// ── 录音计时 ──
+const recordingStartTime = ref(0)
+const recordingDuration = ref(0)
+let recordingTimer = null
+
+function startRecordingTimer() {
+  recordingStartTime.value = Date.now()
+  recordingDuration.value = 0
+  recordingTimer = setInterval(() => {
+    recordingDuration.value = Math.floor((Date.now() - recordingStartTime.value) / 1000)
+  }, 200)
+}
+
+function stopRecordingTimer() {
+  if (recordingTimer) {
+    clearInterval(recordingTimer)
+    recordingTimer = null
+  }
+  // 最终精确计算
+  if (recordingStartTime.value) {
+    recordingDuration.value = Math.max(1, Math.round((Date.now() - recordingStartTime.value) / 1000))
+  }
+  return recordingDuration.value
+}
+
+function formatDuration(sec) {
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+}
+
+// ── 语音条辅助 ──
+function barCount(duration) {
+  // 根据时长决定波形条数量，最少5个，最多20个
+  return Math.max(5, Math.min(20, Math.floor(duration * 1.5) + 3))
+}
+
+function barHeight(n, duration) {
+  // 伪随机生成波形高度（使用确定性算法确保同一消息始终相同）
+  const seed = (n * 7 + duration * 13) % 17
+  return 6 + (seed / 17) * 14
+}
+
+function toggleVoiceExpand(msg) {
+  msg.expanded = !msg.expanded
+}
+
+function editVoiceText(msg, msgIndex) {
+  inputText.value = msg.text
+  // 聚焦输入框
+  nextTick(() => {
+    const input = document.querySelector('.text-input')
+    if (input) input.focus()
+  })
+}
 
 // ── 聊天记录持久化 ──
 const CHAT_STORAGE_KEY = 'hualeme_ai_chat'
@@ -177,7 +278,6 @@ function loadChat() {
 
 function saveChat() {
   try {
-    // 过滤掉正在加载中的占位消息
     const msgs = messages.value.filter(m => !m.loading)
     localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify({
       messages: msgs,
@@ -224,6 +324,10 @@ onMounted(async () => {
   scrollToBottom()
 })
 
+onUnmounted(() => {
+  if (recordingTimer) clearInterval(recordingTimer)
+})
+
 // 自动保存聊天记录
 watch(messages, saveChat, { deep: true })
 
@@ -249,20 +353,26 @@ function scrollToBottom() {
 
 // ── Enter 键处理（兼容中文输入法）──
 function onEnterKey() {
-  // 如果正在输入中文（composing），不触发发送
   if (isComposing.value) return
   sendMessage()
 }
 
-// ── 发送消息 ──
-async function sendMessage() {
+// ── 发送消息（支持 voice 类型）──
+async function sendMessage(opts = {}) {
   const text = inputText.value.trim()
   if (!text || isSending.value) return
   inputText.value = ''
   isSending.value = true
 
   // 用户消息
-  messages.value.push({ role: 'user', text })
+  const userMsg = {
+    role: 'user',
+    text,
+    type: opts.type || 'text',
+    duration: opts.duration || 0,
+    expanded: false
+  }
+  messages.value.push(userMsg)
   chatHistory.value.push({ role: 'user', content: text })
   // AI 占位
   messages.value.push({ role: 'ai', loading: true, records: [], error: '', saved: false, chatText: '' })
@@ -277,12 +387,10 @@ async function sendMessage() {
     )
 
     if (result.type === 'chat') {
-      // 聊天回复
       messages.value[aiIdx].chatText = result.text
       messages.value[aiIdx].loading = false
       chatHistory.value.push({ role: 'assistant', content: result.text })
     } else {
-      // 记账结果
       const recs = result.records || []
       messages.value[aiIdx].records = recs
       messages.value[aiIdx].loading = false
@@ -301,7 +409,6 @@ async function sendMessage() {
 async function rerollMessage(aiMsgIndex) {
   if (isSending.value) return
 
-  // 找到这条 AI 消息对应的用户消息（前一条）
   const userMsgIndex = aiMsgIndex - 1
   if (userMsgIndex < 0 || messages.value[userMsgIndex]?.role !== 'user') {
     toast('找不到对应的用户消息', 'error')
@@ -310,13 +417,10 @@ async function rerollMessage(aiMsgIndex) {
 
   const userText = messages.value[userMsgIndex].text
 
-  // 移除旧的 AI 回复（从 messages 和 chatHistory 中）
   messages.value.splice(aiMsgIndex, 1)
-  // chatHistory 中也要移除最后一条 assistant 回复
   const lastAssistantIdx = chatHistory.value.findLastIndex(h => h.role === 'assistant')
   if (lastAssistantIdx >= 0) chatHistory.value.splice(lastAssistantIdx, 1)
 
-  // 重新发送
   isSending.value = true
   messages.value.push({ role: 'ai', loading: true, records: [], error: '', saved: false, chatText: '' })
   const newAiIdx = messages.value.length - 1
@@ -378,7 +482,6 @@ function removeRecord(msg, index) {
 const browserSTT = useBrowserSTT()
 const mediaRec = useMediaRecorder()
 
-// 检查是否为安全上下文（HTTPS 或 localhost）
 function isSecureContext() {
   return window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1'
 }
@@ -400,16 +503,30 @@ async function toggleVoice() {
       return
     }
     isRecording.value = true
+    startRecordingTimer()
+    let recognizedText = ''
     browserSTT.start({
       onResult: (text, isFinal) => {
-        inputText.value = text
+        recognizedText = text
         if (isFinal) {
+          const duration = stopRecordingTimer()
           isRecording.value = false
-          sendMessage()
+          inputText.value = text
+          sendMessage({ type: 'voice', duration })
         }
       },
-      onEnd: () => { isRecording.value = false },
+      onEnd: () => {
+        if (isRecording.value) {
+          const duration = stopRecordingTimer()
+          isRecording.value = false
+          if (recognizedText) {
+            inputText.value = recognizedText
+            sendMessage({ type: 'voice', duration })
+          }
+        }
+      },
       onError: (err) => {
+        stopRecordingTimer()
         isRecording.value = false
         if (err === 'not-allowed') {
           toast('麦克风被拒绝。\n局域网访问需通过 HTTPS 才能使用语音', 'error')
@@ -420,9 +537,11 @@ async function toggleVoice() {
     })
   } else if (appStore.sttMode === 'api' && appStore.isSTTApiConfigured()) {
     isRecording.value = true
+    startRecordingTimer()
     try {
       await mediaRec.start()
     } catch (e) {
+      stopRecordingTimer()
       isRecording.value = false
       toast('无法访问麦克风，请检查权限', 'error')
     }
@@ -432,6 +551,7 @@ async function toggleVoice() {
 }
 
 async function stopVoice() {
+  const duration = stopRecordingTimer()
   isRecording.value = false
 
   if (appStore.sttMode === 'browser') {
@@ -440,13 +560,28 @@ async function stopVoice() {
     const blob = await mediaRec.stop()
     if (!blob) return
     try {
-      inputText.value = '语音转写中...'
+      // 先添加一个"正在转写"的占位语音条
+      const placeholderIdx = messages.value.length
+      messages.value.push({
+        role: 'user', type: 'voice', text: '语音转写中...', duration, expanded: false, transcribing: true
+      })
+      scrollToBottom()
+
       const text = await transcribeAudio(
         appStore.sttBaseUrl, appStore.sttApiKey, appStore.sttModel, blob
       )
-      inputText.value = text
-      if (text) sendMessage()
+
+      // 移除占位，发送真正的消息
+      messages.value.splice(placeholderIdx, 1)
+
+      if (text) {
+        inputText.value = text
+        sendMessage({ type: 'voice', duration })
+      }
     } catch (e) {
+      // 移除占位
+      const idx = messages.value.findIndex(m => m.transcribing)
+      if (idx >= 0) messages.value.splice(idx, 1)
       inputText.value = ''
       toast(`语音转写失败: ${e.message}`, 'error')
     }
@@ -487,7 +622,7 @@ async function stopVoice() {
 
 .chat-msg { margin-bottom: var(--space-md); display: flex; align-items: flex-start; gap: var(--space-xs); }
 .chat-msg--user { justify-content: flex-end; }
-.chat-msg--ai { justify-content: flex-start; }
+.chat-msg--ai { justify-content: flex-start; flex-wrap: wrap; }
 
 .msg-avatar {
   width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
@@ -504,6 +639,10 @@ async function stopVoice() {
 .msg-bubble--user {
   background: linear-gradient(135deg, var(--pink), var(--lilac));
   color: #fff; border-bottom-right-radius: var(--space-xs);
+  padding: 0; overflow: hidden;
+}
+.msg-bubble--user > .msg-text {
+  padding: var(--space-sm) var(--space-md);
 }
 .msg-bubble--ai {
   background: var(--bg-card); box-shadow: var(--shadow-sm);
@@ -512,6 +651,149 @@ async function stopVoice() {
 .msg-text { font-size: var(--text-sm); line-height: 1.5; }
 .msg-loading { color: var(--text-tertiary); }
 .msg-error { color: var(--expense); font-size: var(--text-xs); }
+
+/* ── 语音气泡 ── */
+.voice-bubble {
+  cursor: pointer; user-select: none;
+  min-width: 120px;
+}
+
+.voice-bubble__main {
+  display: flex; align-items: center; gap: var(--space-sm);
+  padding: 10px 14px;
+}
+
+.voice-bubble__icon {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: rgba(255,255,255,0.25);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.3s ease;
+}
+.voice-bubble__icon--expanded {
+  background: rgba(255,255,255,0.4);
+}
+
+.voice-bubble__bars {
+  display: flex; align-items: center; gap: 2.5px;
+  height: 24px; flex: 1; min-width: 40px;
+}
+
+.voice-bar {
+  width: 3px; border-radius: 3px;
+  background: rgba(255,255,255,0.7);
+  min-height: 4px;
+  transition: height 0.2s ease;
+}
+
+.voice-bubble__duration {
+  font-size: 13px; font-weight: 700;
+  color: rgba(255,255,255,0.9);
+  white-space: nowrap; flex-shrink: 0;
+  letter-spacing: 0.5px;
+}
+
+/* 展开文字 */
+.voice-bubble__text {
+  padding: 8px 14px 10px;
+  border-top: 1px solid rgba(255,255,255,0.15);
+  font-size: var(--text-xs); line-height: 1.5;
+  color: rgba(255,255,255,0.92);
+}
+.voice-bubble__text p {
+  margin: 0 0 6px;
+  word-break: break-all;
+}
+
+.voice-edit-btn {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 10px; border-radius: var(--radius-full);
+  background: rgba(255,255,255,0.2); border: none;
+  color: rgba(255,255,255,0.9); font-size: 11px;
+  cursor: pointer; transition: all var(--duration-fast);
+}
+.voice-edit-btn:active { transform: scale(0.95); background: rgba(255,255,255,0.3); }
+
+.voice-text-slide-enter-active,
+.voice-text-slide-leave-active {
+  transition: all 0.25s ease;
+  max-height: 200px;
+}
+.voice-text-slide-enter-from,
+.voice-text-slide-leave-to {
+  max-height: 0;
+  opacity: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* ── 录音指示器 ── */
+.recording-indicator {
+  position: fixed; bottom: 68px; left: 50%; transform: translateX(-50%);
+  z-index: 25;
+  display: flex; align-items: center; gap: var(--space-md);
+  padding: 12px 20px 12px 16px;
+  background: linear-gradient(135deg, rgba(255,181,194,0.95), rgba(196,181,253,0.95));
+  backdrop-filter: blur(12px);
+  border-radius: 28px;
+  box-shadow: 0 8px 32px rgba(255,143,163,0.3), 0 2px 8px rgba(0,0,0,0.08);
+  min-width: 200px;
+}
+
+.recording-indicator__pulse {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: #FF5A6E;
+  animation: recPulse 1.2s infinite;
+  flex-shrink: 0;
+}
+
+@keyframes recPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+.recording-indicator__content {
+  flex: 1; display: flex; align-items: center; gap: var(--space-sm);
+}
+
+.recording-indicator__waves {
+  display: flex; align-items: center; gap: 3px;
+  height: 20px;
+}
+
+.rec-wave-bar {
+  width: 3px; border-radius: 3px;
+  background: #fff;
+  animation: recWave 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes recWave {
+  0% { height: 6px; }
+  100% { height: 18px; }
+}
+
+.recording-indicator__time {
+  font-size: 15px; font-weight: 700;
+  color: #fff; font-variant-numeric: tabular-nums;
+  letter-spacing: 1px;
+}
+
+.recording-stop-btn {
+  width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.3); border: 2px solid rgba(255,255,255,0.5);
+  cursor: pointer; transition: all var(--duration-fast);
+  flex-shrink: 0;
+}
+.recording-stop-btn:active {
+  transform: scale(0.9);
+  background: rgba(255,255,255,0.5);
+}
+
+.rec-indicator-enter-active { transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.rec-indicator-leave-active { transition: all 0.2s ease; }
+.rec-indicator-enter-from { opacity: 0; transform: translateX(-50%) translateY(20px) scale(0.8); }
+.rec-indicator-leave-to { opacity: 0; transform: translateX(-50%) translateY(10px) scale(0.9); }
 
 /* ── Markdown 渲染样式 ── */
 .msg-markdown :deep(p) { margin: 0 0 0.4em; }
@@ -632,6 +914,10 @@ async function stopVoice() {
   background: rgba(255,255,255,0.9); backdrop-filter: var(--blur-sm);
   border-top: 1px solid rgba(255,181,194,0.1);
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+  transition: opacity 0.2s, transform 0.2s;
+}
+.input-bar--hidden {
+  opacity: 0.3; pointer-events: none;
 }
 
 .mic-btn {

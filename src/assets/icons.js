@@ -91,7 +91,8 @@ const uiIcons = {
     ai: `<path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5V12h2l3 4h-2l1 4h-4l-1-3h-2l-1 3H6l1-4H5l3-4h2V9.5A4 4 0 0 1 12 2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="10.5" cy="5.5" r="0.8" fill="currentColor"/><circle cx="13.5" cy="5.5" r="0.8" fill="currentColor"/>`,
     mic: `<rect x="9" y="2" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 11a7 7 0 0 0 14 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M12 18v4M9 22h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>`,
     'mic-off': `<rect x="9" y="2" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 11a7 7 0 0 0 14 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M12 18v4M9 22h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M3 3l18 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>`,
-    send: `<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>`
+    send: `<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>`,
+    'voice-wave': `<path d="M3 12h2M7 8v8M11 5v14M15 8v8M19 10v4M21 12h2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>`
 }
 
 // ── 装饰/状态 ──
