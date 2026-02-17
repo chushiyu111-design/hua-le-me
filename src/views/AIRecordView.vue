@@ -44,7 +44,7 @@
               </p>
               <p v-else-if="msg.error" class="msg-text msg-error">{{ msg.error }}</p>
               <!-- 聊天回复 -->
-              <p v-else-if="msg.chatText" class="msg-text">{{ msg.chatText }}</p>
+              <div v-else-if="msg.chatText" class="msg-text msg-markdown" v-html="renderMarkdown(msg.chatText)"></div>
               <!-- 记账结果 -->
               <template v-else>
                 <div v-for="(rec, ri) in msg.records" :key="ri" class="parsed-card glass-card-sm">
@@ -118,11 +118,15 @@
           v-model="inputText"
           class="text-input"
           :placeholder="isRecording ? '正在听...' : '描述你的消费，如：午饭吃了30块'"
-          @keydown.enter="sendMessage"
+          @keydown.enter.prevent="onEnterKey"
+          @compositionstart="isComposing = true"
+          @compositionend="isComposing = false"
           :disabled="isRecording"
+          enterkeyhint="send"
+          inputmode="text"
         />
-        <button class="send-btn" @click="sendMessage" :disabled="!inputText.trim() || isSending">
-          <BaseIcon name="send" :size="18" :color="inputText.trim() ? 'var(--pink)' : 'var(--text-tertiary)'" />
+        <button class="send-btn" @click.stop="sendMessage" :disabled="isSending">
+          <BaseIcon name="send" :size="20" :color="inputText.trim() ? 'var(--pink)' : 'var(--text-tertiary)'" />
         </button>
       </div>
     </template>
@@ -139,6 +143,7 @@ import { useCategories } from '@/composables/useCategories'
 import { useAccounts } from '@/composables/useAccounts'
 import { sendToAI } from '@/services/llmService'
 import { useBrowserSTT, useMediaRecorder, transcribeAudio } from '@/services/sttService'
+import { renderMarkdown } from '@/utils/markdown'
 import PageHeader from '@/components/PageHeader.vue'
 import BaseIcon from '@/components/BaseIcon.vue'
 import Toast from '@/components/Toast.vue'
@@ -152,6 +157,7 @@ const inputText = ref('')
 const messages = ref([])
 const isSending = ref(false)
 const isRecording = ref(false)
+const isComposing = ref(false)  // 中文输入法 composing 状态
 const chatArea = ref(null)
 const chatHistory = ref([])  // 维护对话历史用于上下文
 
@@ -239,6 +245,13 @@ function scrollToBottom() {
   nextTick(() => {
     if (chatArea.value) chatArea.value.scrollTop = chatArea.value.scrollHeight
   })
+}
+
+// ── Enter 键处理（兼容中文输入法）──
+function onEnterKey() {
+  // 如果正在输入中文（composing），不触发发送
+  if (isComposing.value) return
+  sendMessage()
 }
 
 // ── 发送消息 ──
@@ -500,6 +513,60 @@ async function stopVoice() {
 .msg-loading { color: var(--text-tertiary); }
 .msg-error { color: var(--expense); font-size: var(--text-xs); }
 
+/* ── Markdown 渲染样式 ── */
+.msg-markdown :deep(p) { margin: 0 0 0.4em; }
+.msg-markdown :deep(p:last-child) { margin-bottom: 0; }
+.msg-markdown :deep(strong) { font-weight: 700; color: var(--text-primary); }
+.msg-markdown :deep(em) { font-style: italic; }
+.msg-markdown :deep(ul), .msg-markdown :deep(ol) {
+  margin: 0.3em 0; padding-left: 1.4em;
+}
+.msg-markdown :deep(li) { margin-bottom: 0.2em; }
+.msg-markdown :deep(code) {
+  background: rgba(255,181,194,0.12); padding: 1px 5px;
+  border-radius: var(--radius-sm); font-size: 0.9em;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+.msg-markdown :deep(pre) {
+  background: var(--bg-secondary); padding: var(--space-sm);
+  border-radius: var(--radius-md); overflow-x: auto;
+  margin: 0.4em 0; font-size: 0.85em;
+}
+.msg-markdown :deep(pre code) {
+  background: none; padding: 0;
+}
+.msg-markdown :deep(blockquote) {
+  border-left: 3px solid var(--pink-light);
+  margin: 0.4em 0; padding: 0.2em 0.8em;
+  color: var(--text-secondary); font-style: italic;
+}
+.msg-markdown :deep(h1), .msg-markdown :deep(h2), .msg-markdown :deep(h3),
+.msg-markdown :deep(h4), .msg-markdown :deep(h5), .msg-markdown :deep(h6) {
+  margin: 0.5em 0 0.3em; font-weight: 700;
+  line-height: 1.3;
+}
+.msg-markdown :deep(h1) { font-size: 1.2em; }
+.msg-markdown :deep(h2) { font-size: 1.1em; }
+.msg-markdown :deep(h3) { font-size: 1em; }
+.msg-markdown :deep(hr) {
+  border: none; border-top: 1px solid rgba(255,181,194,0.2);
+  margin: 0.5em 0;
+}
+.msg-markdown :deep(a) {
+  color: var(--pink); text-decoration: underline;
+}
+.msg-markdown :deep(table) {
+  width: 100%; border-collapse: collapse;
+  margin: 0.4em 0; font-size: 0.9em;
+}
+.msg-markdown :deep(th), .msg-markdown :deep(td) {
+  border: 1px solid rgba(255,181,194,0.15);
+  padding: 4px 8px; text-align: left;
+}
+.msg-markdown :deep(th) {
+  background: rgba(255,181,194,0.08); font-weight: 600;
+}
+
 @keyframes msgIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -592,12 +659,20 @@ async function stopVoice() {
 .text-input::placeholder { color: var(--text-tertiary); }
 
 .send-btn {
-  width: 36px; height: 36px; border-radius: 50%;
+  width: 44px; height: 44px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   background: transparent; border: none; cursor: pointer; flex-shrink: 0;
   transition: all var(--duration-fast);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  position: relative;
 }
-.send-btn:active { transform: scale(0.9); }
+/* 扩大触摸热区 */
+.send-btn::before {
+  content: ''; position: absolute;
+  top: -6px; right: -6px; bottom: -6px; left: -6px;
+}
+.send-btn:active { transform: scale(0.85); }
 
 /* ── 重新生成按钮 ── */
 .reroll-bar {
