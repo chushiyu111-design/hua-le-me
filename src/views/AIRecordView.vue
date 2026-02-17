@@ -1,0 +1,619 @@
+<template>
+  <div class="ai-record safe-top">
+    <PageHeader title="AI 记账" showBack>
+      <template #right>
+        <button v-if="messages.length > 0" class="header-btn" @click="confirmClear" title="清空聊天">
+          <BaseIcon name="trash" :size="18" color="var(--text-secondary)" />
+        </button>
+        <button class="header-btn" @click="$router.push('/ai-settings')">
+          <BaseIcon name="settings" :size="20" color="var(--text-secondary)" />
+        </button>
+      </template>
+    </PageHeader>
+
+    <!-- 未配置提示 -->
+    <div v-if="!appStore.isLLMConfigured()" class="empty-state animate-fade-in-up">
+      <BaseIcon name="ai" :size="48" color="var(--pink-light)" />
+      <p>还没有配置 AI 接口哦～</p>
+      <button class="btn-primary" @click="$router.push('/ai-settings')">去设置</button>
+    </div>
+
+    <template v-else>
+      <!-- 聊天区域 -->
+      <div class="chat-area" ref="chatArea">
+        <div v-if="messages.length === 0" class="chat-empty animate-fade-in-up">
+          <BaseIcon name="ai" :size="40" color="var(--pink-light)" />
+          <p>说一句话就能记账～</p>
+          <div class="examples">
+            <button class="example-chip" v-for="ex in examples" :key="ex" @click="inputText = ex; sendMessage()">{{ ex }}</button>
+          </div>
+        </div>
+
+        <div v-for="(msg, i) in messages" :key="i" class="chat-msg" :class="`chat-msg--${msg.role}`">
+          <div v-if="msg.role === 'ai'" class="msg-avatar">
+            <img v-if="appStore.aiAvatar" :src="appStore.aiAvatar" class="msg-avatar-img" />
+            <BaseIcon v-else name="ai" :size="20" color="var(--pink)" />
+          </div>
+          <div class="msg-bubble" :class="`msg-bubble--${msg.role}`">
+            <!-- 用户消息 -->
+            <p v-if="msg.role === 'user'" class="msg-text">{{ msg.text }}</p>
+            <!-- AI 解析结果 -->
+            <template v-else>
+              <p v-if="msg.loading" class="msg-text msg-loading">
+                <span class="dot-anim">●●●</span> 正在解析...
+              </p>
+              <p v-else-if="msg.error" class="msg-text msg-error">{{ msg.error }}</p>
+              <!-- 聊天回复 -->
+              <p v-else-if="msg.chatText" class="msg-text">{{ msg.chatText }}</p>
+              <!-- 记账结果 -->
+              <template v-else>
+                <div v-for="(rec, ri) in msg.records" :key="ri" class="parsed-card glass-card-sm">
+                  <div class="parsed-card__header">
+                    <span class="parsed-type" :class="rec.type === 'expense' ? 'type--expense' : 'type--income'">
+                      {{ rec.type === 'expense' ? '支出' : '收入' }}
+                    </span>
+                    <span class="parsed-amount">¥{{ rec.amount.toFixed(2) }}</span>
+                  </div>
+                  <div class="parsed-card__body">
+                    <div class="parsed-field">
+                      <BaseIcon name="calendar" :size="14" color="var(--text-tertiary)" />
+                      <span>{{ rec.date }}</span>
+                    </div>
+                    <div class="parsed-field">
+                      <BaseIcon :name="getCategoryIcon(rec.categoryId)" :size="14" color="var(--text-tertiary)" />
+                      <span>{{ getCategoryName(rec.categoryId) }}</span>
+                    </div>
+                    <div class="parsed-field" v-if="rec.accountId">
+                      <BaseIcon name="card" :size="14" color="var(--text-tertiary)" />
+                      <span>{{ getAccountName(rec.accountId) }}</span>
+                    </div>
+                    <div class="parsed-field" v-if="rec.note">
+                      <BaseIcon name="note" :size="14" color="var(--text-tertiary)" />
+                      <span>{{ rec.note }}</span>
+                    </div>
+                    <div class="parsed-field" v-if="rec.tags && rec.tags.length">
+                      <BaseIcon name="tag" :size="14" color="var(--text-tertiary)" />
+                      <span>{{ rec.tags.join(', ') }}</span>
+                    </div>
+                    <div class="parsed-field" v-if="rec.mood">
+                      <BaseIcon :name="rec.mood" :size="14" color="var(--text-tertiary)" />
+                      <span>{{ getMoodLabel(rec.mood) }}</span>
+                    </div>
+                  </div>
+                  <div v-if="!msg.saved" class="parsed-card__edit">
+                    <button class="edit-btn" @click="removeRecord(msg, ri)">
+                      <BaseIcon name="trash" :size="14" color="var(--expense)" />
+                    </button>
+                  </div>
+                </div>
+                <div v-if="!msg.saved && msg.records.length > 0" class="save-bar">
+                  <button class="btn-primary save-btn" @click="saveAll(msg)">
+                    <BaseIcon name="check" :size="16" color="#fff" />
+                    <span>保存全部 ({{ msg.records.length }} 条)</span>
+                  </button>
+                </div>
+                <div v-if="msg.saved" class="saved-notice">
+                  <BaseIcon name="success" :size="16" color="var(--income)" />
+                  <span>已保存</span>
+                </div>
+              </template>
+            </template>
+          </div>
+          <!-- 重新生成按钮 -->
+          <div v-if="msg.role === 'ai' && !msg.loading && !msg.saved && !isSending" class="reroll-bar">
+            <button class="reroll-btn" @click="rerollMessage(i)" title="不满意？重新生成">
+              <BaseIcon name="settings" :size="14" color="var(--text-tertiary)" />
+              <span>重新生成</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 输入区 -->
+      <div class="input-bar">
+        <button class="mic-btn" :class="{ 'mic-btn--active': isRecording }" @click="toggleVoice">
+          <BaseIcon :name="isRecording ? 'mic' : 'mic'" :size="22" :color="isRecording ? '#fff' : 'var(--pink)'" />
+        </button>
+        <input
+          v-model="inputText"
+          class="text-input"
+          :placeholder="isRecording ? '正在听...' : '描述你的消费，如：午饭吃了30块'"
+          @keydown.enter="sendMessage"
+          :disabled="isRecording"
+        />
+        <button class="send-btn" @click="sendMessage" :disabled="!inputText.trim() || isSending">
+          <BaseIcon name="send" :size="18" :color="inputText.trim() ? 'var(--pink)' : 'var(--text-tertiary)'" />
+        </button>
+      </div>
+    </template>
+
+    <Toast :show="showToast" :message="toastMsg" :type="toastType" @close="showToast = false" />
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted, nextTick, watch } from 'vue'
+import { useAppStore } from '@/stores/appStore'
+import { useRecords } from '@/composables/useRecords'
+import { useCategories } from '@/composables/useCategories'
+import { useAccounts } from '@/composables/useAccounts'
+import { sendToAI } from '@/services/llmService'
+import { useBrowserSTT, useMediaRecorder, transcribeAudio } from '@/services/sttService'
+import PageHeader from '@/components/PageHeader.vue'
+import BaseIcon from '@/components/BaseIcon.vue'
+import Toast from '@/components/Toast.vue'
+
+const appStore = useAppStore()
+const { addRecord } = useRecords()
+const { getCategories } = useCategories()
+const { getAccounts } = useAccounts()
+
+const inputText = ref('')
+const messages = ref([])
+const isSending = ref(false)
+const isRecording = ref(false)
+const chatArea = ref(null)
+const chatHistory = ref([])  // 维护对话历史用于上下文
+
+// ── 聊天记录持久化 ──
+const CHAT_STORAGE_KEY = 'hualeme_ai_chat'
+
+function loadChat() {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY)
+    if (raw) {
+      const data = JSON.parse(raw)
+      messages.value = data.messages || []
+      chatHistory.value = data.chatHistory || []
+    }
+  } catch { /* ignore */ }
+}
+
+function saveChat() {
+  try {
+    // 过滤掉正在加载中的占位消息
+    const msgs = messages.value.filter(m => !m.loading)
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify({
+      messages: msgs,
+      chatHistory: chatHistory.value
+    }))
+  } catch (e) { console.warn('chat save failed', e) }
+}
+
+function clearChat() {
+  messages.value = []
+  chatHistory.value = []
+  localStorage.removeItem(CHAT_STORAGE_KEY)
+}
+
+function confirmClear() {
+  if (confirm('确定要清空所有聊天记录吗？')) {
+    clearChat()
+    toast('聊天记录已清空')
+  }
+}
+
+const categories = ref([])
+const accounts = ref([])
+
+const examples = [
+  '午饭吃了30块',
+  '打车去公司花了15元',
+  '收到工资8000',
+  '和小美喝奶茶花了25，微信付的'
+]
+
+// Toast
+const showToast = ref(false)
+const toastMsg = ref('')
+const toastType = ref('success')
+function toast(msg, type = 'success') {
+  toastMsg.value = msg; toastType.value = type; showToast.value = true
+}
+
+onMounted(async () => {
+  categories.value = await getCategories()
+  accounts.value = await getAccounts()
+  loadChat()
+  scrollToBottom()
+})
+
+// 自动保存聊天记录
+watch(messages, saveChat, { deep: true })
+
+function getCategoryName(id) {
+  return categories.value.find(c => c.id === id)?.name || '未知'
+}
+function getCategoryIcon(id) {
+  return categories.value.find(c => c.id === id)?.icon || 'other-expense'
+}
+function getAccountName(id) {
+  return accounts.value.find(a => a.id === id)?.name || '默认账户'
+}
+function getMoodLabel(key) {
+  const map = { happy: '开心', impulse: '冲动', pain: '心疼', love: '幸福', neutral: '平静' }
+  return map[key] || key
+}
+
+function scrollToBottom() {
+  nextTick(() => {
+    if (chatArea.value) chatArea.value.scrollTop = chatArea.value.scrollHeight
+  })
+}
+
+// ── 发送消息 ──
+async function sendMessage() {
+  const text = inputText.value.trim()
+  if (!text || isSending.value) return
+  inputText.value = ''
+  isSending.value = true
+
+  // 用户消息
+  messages.value.push({ role: 'user', text })
+  chatHistory.value.push({ role: 'user', content: text })
+  // AI 占位
+  messages.value.push({ role: 'ai', loading: true, records: [], error: '', saved: false, chatText: '' })
+  const aiIdx = messages.value.length - 1
+  scrollToBottom()
+
+  try {
+    const result = await sendToAI(
+      appStore.llmBaseUrl, appStore.llmApiKey, appStore.llmModel,
+      text, categories.value, accounts.value,
+      appStore.llmSystemPrompt, chatHistory.value
+    )
+
+    if (result.type === 'chat') {
+      // 聊天回复
+      messages.value[aiIdx].chatText = result.text
+      messages.value[aiIdx].loading = false
+      chatHistory.value.push({ role: 'assistant', content: result.text })
+    } else {
+      // 记账结果
+      const recs = result.records || []
+      messages.value[aiIdx].records = recs
+      messages.value[aiIdx].loading = false
+      if (recs.length === 0) messages.value[aiIdx].error = 'AI 没有解析出任何记录，请换个表达试试'
+      chatHistory.value.push({ role: 'assistant', content: JSON.stringify(result) })
+    }
+  } catch (e) {
+    messages.value[aiIdx].loading = false
+    messages.value[aiIdx].error = `解析失败: ${e.message}`
+  }
+  isSending.value = false
+  scrollToBottom()
+}
+
+// ── 重新生成（re-roll）──
+async function rerollMessage(aiMsgIndex) {
+  if (isSending.value) return
+
+  // 找到这条 AI 消息对应的用户消息（前一条）
+  const userMsgIndex = aiMsgIndex - 1
+  if (userMsgIndex < 0 || messages.value[userMsgIndex]?.role !== 'user') {
+    toast('找不到对应的用户消息', 'error')
+    return
+  }
+
+  const userText = messages.value[userMsgIndex].text
+
+  // 移除旧的 AI 回复（从 messages 和 chatHistory 中）
+  messages.value.splice(aiMsgIndex, 1)
+  // chatHistory 中也要移除最后一条 assistant 回复
+  const lastAssistantIdx = chatHistory.value.findLastIndex(h => h.role === 'assistant')
+  if (lastAssistantIdx >= 0) chatHistory.value.splice(lastAssistantIdx, 1)
+
+  // 重新发送
+  isSending.value = true
+  messages.value.push({ role: 'ai', loading: true, records: [], error: '', saved: false, chatText: '' })
+  const newAiIdx = messages.value.length - 1
+  scrollToBottom()
+
+  try {
+    const result = await sendToAI(
+      appStore.llmBaseUrl, appStore.llmApiKey, appStore.llmModel,
+      userText, categories.value, accounts.value,
+      appStore.llmSystemPrompt, chatHistory.value
+    )
+
+    if (result.type === 'chat') {
+      messages.value[newAiIdx].chatText = result.text
+      messages.value[newAiIdx].loading = false
+      chatHistory.value.push({ role: 'assistant', content: result.text })
+    } else {
+      const recs = result.records || []
+      messages.value[newAiIdx].records = recs
+      messages.value[newAiIdx].loading = false
+      if (recs.length === 0) messages.value[newAiIdx].error = 'AI 没有解析出任何记录，请换个表达试试'
+      chatHistory.value.push({ role: 'assistant', content: JSON.stringify(result) })
+    }
+  } catch (e) {
+    messages.value[newAiIdx].loading = false
+    messages.value[newAiIdx].error = `解析失败: ${e.message}`
+  }
+  isSending.value = false
+  scrollToBottom()
+}
+
+// ── 保存记录 ──
+async function saveAll(msg) {
+  try {
+    for (const rec of msg.records) {
+      await addRecord({
+        amount: rec.amount,
+        type: rec.type,
+        categoryId: rec.categoryId,
+        date: rec.date,
+        accountId: accounts.value.some(a => a.id === rec.accountId) ? rec.accountId : (accounts.value[0]?.id || 1),
+        note: rec.note || '',
+        tags: rec.tags || [],
+        mood: rec.mood || 'neutral'
+      })
+    }
+    msg.saved = true
+    toast(`已保存 ${msg.records.length} 条记录`)
+  } catch (e) {
+    toast(`保存失败: ${e.message}`, 'error')
+  }
+}
+
+function removeRecord(msg, index) {
+  msg.records.splice(index, 1)
+}
+
+// ── 语音 ──
+const browserSTT = useBrowserSTT()
+const mediaRec = useMediaRecorder()
+
+// 检查是否为安全上下文（HTTPS 或 localhost）
+function isSecureContext() {
+  return window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+}
+
+async function toggleVoice() {
+  if (isRecording.value) {
+    stopVoice()
+    return
+  }
+
+  // 浏览器原生模式
+  if (appStore.sttMode === 'browser') {
+    if (!isSecureContext()) {
+      toast('浏览器语音需要 HTTPS 访问。\n请改用 localhost 或切换到 API 模式', 'error')
+      return
+    }
+    if (!browserSTT.supported) {
+      toast('当前浏览器不支持语音识别，请使用 Chrome 或切换到 API 模式', 'error')
+      return
+    }
+    isRecording.value = true
+    browserSTT.start({
+      onResult: (text, isFinal) => {
+        inputText.value = text
+        if (isFinal) {
+          isRecording.value = false
+          sendMessage()
+        }
+      },
+      onEnd: () => { isRecording.value = false },
+      onError: (err) => {
+        isRecording.value = false
+        if (err === 'not-allowed') {
+          toast('麦克风被拒绝。\n局域网访问需通过 HTTPS 才能使用语音', 'error')
+        } else {
+          toast(`语音识别出错: ${err}`, 'error')
+        }
+      }
+    })
+  } else if (appStore.sttMode === 'api' && appStore.isSTTApiConfigured()) {
+    isRecording.value = true
+    try {
+      await mediaRec.start()
+    } catch (e) {
+      isRecording.value = false
+      toast('无法访问麦克风，请检查权限', 'error')
+    }
+  } else {
+    toast('语音功能未配置，请先到 AI 设置中配置', 'error')
+  }
+}
+
+async function stopVoice() {
+  isRecording.value = false
+
+  if (appStore.sttMode === 'browser') {
+    browserSTT.stop()
+  } else {
+    const blob = await mediaRec.stop()
+    if (!blob) return
+    try {
+      inputText.value = '语音转写中...'
+      const text = await transcribeAudio(
+        appStore.sttBaseUrl, appStore.sttApiKey, appStore.sttModel, blob
+      )
+      inputText.value = text
+      if (text) sendMessage()
+    } catch (e) {
+      inputText.value = ''
+      toast(`语音转写失败: ${e.message}`, 'error')
+    }
+  }
+}
+</script>
+
+<style scoped>
+.ai-record {
+  display: flex; flex-direction: column;
+  height: 100vh; height: 100dvh;
+  overflow: hidden;
+}
+
+/* ── 空状态 ── */
+.empty-state {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: var(--space-md);
+  color: var(--text-secondary); font-size: var(--text-base);
+}
+
+/* ── 聊天 ── */
+.chat-area {
+  flex: 1; overflow-y: auto; padding: var(--space-md) var(--space-lg);
+  padding-bottom: 80px;
+}
+.chat-empty {
+  display: flex; flex-direction: column; align-items: center;
+  padding-top: 20vh; gap: var(--space-md); color: var(--text-tertiary);
+}
+.examples { display: flex; flex-wrap: wrap; gap: var(--space-xs); justify-content: center; margin-top: var(--space-sm); }
+.example-chip {
+  padding: var(--space-xs) var(--space-md); border-radius: var(--radius-full);
+  background: var(--pink-light); color: var(--pink-deep); font-size: var(--text-xs);
+  border: none; cursor: pointer; transition: all var(--duration-fast);
+}
+.example-chip:active { transform: scale(0.95); opacity: 0.8; }
+
+.chat-msg { margin-bottom: var(--space-md); display: flex; align-items: flex-start; gap: var(--space-xs); }
+.chat-msg--user { justify-content: flex-end; }
+.chat-msg--ai { justify-content: flex-start; }
+
+.msg-avatar {
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+  background: var(--bg-secondary); border: 1.5px solid var(--pink-light);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; margin-top: 2px;
+}
+.msg-avatar-img { width: 100%; height: 100%; object-fit: cover; }
+
+.msg-bubble {
+  max-width: 88%; border-radius: var(--radius-lg); padding: var(--space-sm) var(--space-md);
+  animation: msgIn 0.3s ease;
+}
+.msg-bubble--user {
+  background: linear-gradient(135deg, var(--pink), var(--lilac));
+  color: #fff; border-bottom-right-radius: var(--space-xs);
+}
+.msg-bubble--ai {
+  background: var(--bg-card); box-shadow: var(--shadow-sm);
+  border-bottom-left-radius: var(--space-xs);
+}
+.msg-text { font-size: var(--text-sm); line-height: 1.5; }
+.msg-loading { color: var(--text-tertiary); }
+.msg-error { color: var(--expense); font-size: var(--text-xs); }
+
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dot-anim { animation: dotPulse 1.2s infinite; }
+@keyframes dotPulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* ── 解析卡片 ── */
+.parsed-card {
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-xs); border-radius: var(--radius-md);
+  background: var(--bg-secondary); position: relative;
+}
+.parsed-card__header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: var(--space-xs);
+}
+.parsed-type {
+  font-size: var(--text-xs); font-weight: 700; padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+.type--expense { background: rgba(255,143,163,0.15); color: var(--expense); }
+.type--income { background: rgba(125,203,168,0.15); color: var(--income); }
+.parsed-amount { font-size: var(--text-lg); font-weight: 800; color: var(--text-primary); }
+
+.parsed-card__body { display: flex; flex-wrap: wrap; gap: var(--space-xs) var(--space-md); }
+.parsed-field {
+  display: flex; align-items: center; gap: 4px;
+  font-size: var(--text-xs); color: var(--text-secondary);
+}
+.parsed-card__edit { position: absolute; top: var(--space-sm); right: var(--space-sm); }
+.edit-btn {
+  width: 24px; height: 24px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,143,163,0.1); border: none; cursor: pointer;
+}
+
+.save-bar { margin-top: var(--space-sm); }
+.save-btn {
+  width: 100%; display: flex; align-items: center; justify-content: center;
+  gap: var(--space-xs); padding: var(--space-sm);
+  border-radius: var(--radius-md); border: none;
+  background: linear-gradient(135deg, var(--pink), var(--lilac));
+  color: #fff; font-weight: 700; font-size: var(--text-sm);
+  cursor: pointer; transition: all var(--duration-fast);
+}
+.save-btn:active { transform: scale(0.97); }
+
+.saved-notice {
+  display: flex; align-items: center; gap: var(--space-xs);
+  margin-top: var(--space-xs); font-size: var(--text-xs); color: var(--income);
+}
+
+/* ── 输入栏 ── */
+.input-bar {
+  display: flex; align-items: center; gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  padding-bottom: calc(var(--space-sm) + env(safe-area-inset-bottom, 0px));
+  background: rgba(255,255,255,0.9); backdrop-filter: var(--blur-sm);
+  border-top: 1px solid rgba(255,181,194,0.1);
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+}
+
+.mic-btn {
+  width: 40px; height: 40px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-secondary); border: 2px solid var(--pink-light);
+  cursor: pointer; transition: all var(--duration-fast); flex-shrink: 0;
+}
+.mic-btn--active {
+  background: var(--pink); border-color: var(--pink);
+  animation: micPulse 1.5s infinite;
+}
+@keyframes micPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,181,194,0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(255,181,194,0); }
+}
+
+.text-input {
+  flex: 1; padding: var(--space-sm) var(--space-md);
+  border: 1.5px solid rgba(255,181,194,0.2); border-radius: var(--radius-full);
+  font-size: var(--text-sm); font-family: inherit;
+  background: var(--bg-secondary); color: var(--text-primary); outline: none;
+}
+.text-input:focus { border-color: var(--pink); }
+.text-input::placeholder { color: var(--text-tertiary); }
+
+.send-btn {
+  width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer; flex-shrink: 0;
+  transition: all var(--duration-fast);
+}
+.send-btn:active { transform: scale(0.9); }
+
+/* ── 重新生成按钮 ── */
+.reroll-bar {
+  display: flex; justify-content: flex-start;
+  margin-top: 2px; margin-bottom: var(--space-xs);
+}
+.reroll-btn {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: var(--radius-full);
+  background: transparent; border: 1px solid rgba(255,181,194,0.25);
+  color: var(--text-tertiary); font-size: 11px;
+  cursor: pointer; transition: all var(--duration-fast);
+}
+.reroll-btn:hover {
+  border-color: var(--pink-light); color: var(--pink-deep);
+  background: rgba(255,181,194,0.08);
+}
+.reroll-btn:active { transform: scale(0.95); opacity: 0.8; }
+</style>
