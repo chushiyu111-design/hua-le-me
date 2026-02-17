@@ -14,12 +14,19 @@ class RecordRepository extends BaseRepository {
 
     /** 新增记录（自动补 accountId / tags / createdAt） */
     async addRecord(record) {
-        return await this.add({
-            ...record,
+        // 构建纯净数据对象，避免 Vue Proxy 导致 IndexedDB DataCloneError
+        const plain = {
+            amount: record.amount,
+            type: record.type,
+            categoryId: record.categoryId,
+            date: record.date,
             accountId: record.accountId || 1,
-            tags: record.tags || [],
+            note: record.note || '',
+            tags: record.tags ? [...record.tags] : [],
+            mood: record.mood || 'neutral',
             createdAt: new Date().toISOString()
-        })
+        }
+        return await this.add(plain)
     }
 
     // ── 单日 / 日期范围查询 ─────────────────
