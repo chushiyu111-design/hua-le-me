@@ -82,7 +82,7 @@
                       <span class="parsed-type" :class="rec.type === 'expense' ? 'type--expense' : 'type--income'">
                         {{ rec.type === 'expense' ? '支出' : '收入' }}
                       </span>
-                      <span class="parsed-amount">¥{{ rec.amount.toFixed(2) }}</span>
+                      <span class="parsed-amount">¥{{ Number(rec.amount).toFixed(2) }}</span>
                     </div>
                     <div class="parsed-card__body">
                       <div class="parsed-field">
@@ -667,8 +667,9 @@ async function stopVoice() {
         appStore.sttBaseUrl, appStore.sttApiKey, appStore.sttModel, blob
       )
 
-      // 移除占位，发送真正的消息
-      messages.value.splice(placeholderIdx, 1)
+      // 移除占位，发送真正的消息（用 transcribing 标记精确查找，避免索引错位）
+      const phIdx = messages.value.findIndex(m => m.transcribing)
+      if (phIdx >= 0) messages.value.splice(phIdx, 1)
 
       if (text) {
         inputText.value = text

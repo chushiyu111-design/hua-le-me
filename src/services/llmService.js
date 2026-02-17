@@ -65,6 +65,28 @@ export async function testConnection(baseUrl, apiKey, model) {
 // 禁止：聊天、回复、人设、情感表达
 
 /**
+ * 清洗/标准化 records 数据 — 防止 LLM 返回脏数据导致前端崩溃
+ */
+function sanitizeRecords(records, accounts) {
+    if (!Array.isArray(records)) return []
+    const today = new Date().toISOString().split('T')[0]
+    const defaultAccountId = accounts?.[0]?.id || 1
+
+    return records
+        .map(r => ({
+            amount: Math.abs(parseFloat(r.amount)) || 0,
+            type: r.type === 'income' ? 'income' : 'expense',
+            categoryId: parseInt(r.categoryId) || 1,
+            date: /^\d{4}-\d{2}-\d{2}$/.test(r.date) ? r.date : today,
+            accountId: parseInt(r.accountId) || defaultAccountId,
+            note: String(r.note || ''),
+            tags: Array.isArray(r.tags) ? r.tags : [],
+            mood: r.mood || 'neutral'
+        }))
+        .filter(r => r.amount > 0) // 过滤掉金额为 0 的无效记录
+}
+
+/**
  * 意图提取 — 模型1专用
  * 输入用户原话，输出纯 JSON（intent + records/topic + user_emotion）
  *
@@ -91,9 +113,10 @@ export async function extractIntent(baseUrl, apiKey, model, text, categories, ac
 
 今天是 ${today}（星期${dow}）。
 
-【判断逻辑】
-- 如果用户话语中包含明确的花费、购买、收入、转账、付款、消费等财务变动行为（哪怕带有大量情绪发泄），intent 为 "accounting"
-- 如果用户只是在抱怨、提问、倾诉、日常闲聊，没有发生实际的金钱增减，intent 为 "chat"
+【判断逻辑 — 宁滥勿漏】
+- 只要用户话语中出现任何金额数字（如 5元/10块/100）+ 任何动作动词（如 花/买/吃/喝/打车/付/充值/交/还/收到/卖），一律判定为 intent="accounting"，哪怕语句不通顺或夹带大量情绪
+- 语音转文字的结果可能有错别字（如"买"写成"卖"），不要因为个别字不对就判为闲聊
+- 只有完全没有金额数字、也没有任何消费/收入动作的纯闲聊，才判定为 intent="chat"
 
 【当 intent="accounting" 时的输出】
 {"intent":"accounting","records":[{"amount":数字,"type":"expense或income","categoryId":分类id,"date":"YYYY-MM-DD","accountId":账户id,"note":"备注","tags":["标签"],"mood":"情绪key"}],"user_emotion":"情绪词"}
@@ -142,17 +165,22 @@ export async function extractIntent(baseUrl, apiKey, model, text, categories, ac
 
     // 验证解析结果
     if (parsed && parsed.intent === 'accounting' && Array.isArray(parsed.records)) {
-        return parsed
+        return { ...parsed, records: sanitizeRecords(parsed.records, accounts) }
     }
     if (parsed && parsed.intent === 'chat') {
         return parsed
     }
     // 兜底：有 records 但没有 intent 字段
     if (parsed && Array.isArray(parsed.records)) {
-        return { intent: 'accounting', records: parsed.records, user_emotion: parsed.user_emotion || '平淡' }
+        return { intent: 'accounting', records: sanitizeRecords(parsed.records, accounts), user_emotion: parsed.user_emotion || '平淡' }
     }
 
-    // JSON 解析失败 → 当作 chat
+    // JSON 解析失败 → 最后用关键词检测兜底
+    if (/\d+[元块]|花了|买了|付了|收到|工资|转账|充值/.test(text)) {
+        // 用户原话有明显消费特征但 AI 没解析出来，返回错误提示
+        return { intent: 'accounting', records: [], user_emotion: '平淡' }
+    }
+
     return { intent: 'chat', topic: '未知', user_emotion: '平淡' }
 }
 
