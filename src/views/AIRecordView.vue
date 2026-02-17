@@ -639,10 +639,9 @@ async function stopVoice() {
 .msg-bubble--user {
   background: linear-gradient(135deg, var(--pink), var(--lilac));
   color: #fff; border-bottom-right-radius: var(--space-xs);
-  padding: 0; overflow: hidden;
 }
-.msg-bubble--user > .msg-text {
-  padding: var(--space-sm) var(--space-md);
+.msg-bubble--user .voice-bubble {
+  margin: calc(var(--space-sm) * -1) calc(var(--space-md) * -1);
 }
 .msg-bubble--ai {
   background: var(--bg-card); box-shadow: var(--shadow-sm);
