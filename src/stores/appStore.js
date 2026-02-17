@@ -53,10 +53,18 @@ export const useAppStore = defineStore('app', () => {
 
     // ── AI 配置 ──
     const aiSaved = loadAISettings()
+    // ── 模型1：理性提取脑 ──
     const llmBaseUrl = ref(aiSaved.llmBaseUrl || '')
     const llmApiKey = ref(aiSaved.llmApiKey || '')
     const llmModel = ref(aiSaved.llmModel || '')
     const llmSystemPrompt = ref(aiSaved.llmSystemPrompt || '')
+
+    // ── 模型2：感性回复脑 ──
+    const llm2BaseUrl = ref(aiSaved.llm2BaseUrl || '')
+    const llm2ApiKey = ref(aiSaved.llm2ApiKey || '')
+    const llm2Model = ref(aiSaved.llm2Model || '')
+
+    // ── 语音识别 ──
     const sttMode = ref(aiSaved.sttMode || 'browser') // 'browser' | 'api'
     const sttBaseUrl = ref(aiSaved.sttBaseUrl || '')
     const sttApiKey = ref(aiSaved.sttApiKey || '')
@@ -70,6 +78,7 @@ export const useAppStore = defineStore('app', () => {
     } catch { /* ignore */ }
 
     const isLLMConfigured = () => !!(llmBaseUrl.value && llmApiKey.value && llmModel.value)
+    const isLLM2Configured = () => !!(llm2BaseUrl.value && llm2ApiKey.value && llm2Model.value)
     const isSTTApiConfigured = () => !!(sttBaseUrl.value && sttApiKey.value && sttModel.value)
 
     // 持久化 — 基础设置
@@ -83,12 +92,15 @@ export const useAppStore = defineStore('app', () => {
     })
 
     // 持久化 — AI 设置
-    watch([llmBaseUrl, llmApiKey, llmModel, llmSystemPrompt, sttMode, sttBaseUrl, sttApiKey, sttModel], () => {
+    watch([llmBaseUrl, llmApiKey, llmModel, llmSystemPrompt, llm2BaseUrl, llm2ApiKey, llm2Model, sttMode, sttBaseUrl, sttApiKey, sttModel], () => {
         saveAISettings({
             llmBaseUrl: llmBaseUrl.value,
             llmApiKey: llmApiKey.value,
             llmModel: llmModel.value,
             llmSystemPrompt: llmSystemPrompt.value,
+            llm2BaseUrl: llm2BaseUrl.value,
+            llm2ApiKey: llm2ApiKey.value,
+            llm2Model: llm2Model.value,
             sttMode: sttMode.value,
             sttBaseUrl: sttBaseUrl.value,
             sttApiKey: sttApiKey.value,
@@ -179,10 +191,13 @@ export const useAppStore = defineStore('app', () => {
         username, avatar, avatarType, theme,
         currentMonth, currentYear, avatarOptions,
         setUsername, setAvatar, setAvatarFromFile, setTheme, applyTheme, initTheme,
-        // AI
+        // AI — 模型1（提取脑）
         llmBaseUrl, llmApiKey, llmModel, llmSystemPrompt,
+        // AI — 模型2（回复脑）
+        llm2BaseUrl, llm2ApiKey, llm2Model,
+        // AI — 语音
         sttMode, sttBaseUrl, sttApiKey, sttModel,
-        isLLMConfigured, isSTTApiConfigured,
+        isLLMConfigured, isLLM2Configured, isSTTApiConfigured,
         aiAvatar, setAiAvatar, clearAiAvatar
     }
 })

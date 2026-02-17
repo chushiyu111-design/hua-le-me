@@ -64,65 +64,77 @@
               <!-- 普通文字消息 -->
               <p v-else class="msg-text">{{ msg.text }}</p>
             </template>
-            <!-- AI 解析结果 -->
+            <!-- AI 消息 -->
             <template v-else>
+              <!-- 加载中 -->
               <p v-if="msg.loading" class="msg-text msg-loading">
-                <span class="dot-anim">●●●</span> 正在解析...
+                <span class="dot-anim">●●●</span>
+                {{ msg.phase === 'respond' ? '正在生成回复...' : '正在分析...' }}
               </p>
+              <!-- 错误 -->
               <p v-else-if="msg.error" class="msg-text msg-error">{{ msg.error }}</p>
-              <!-- 聊天回复 -->
-              <div v-else-if="msg.chatText" class="msg-text msg-markdown" v-html="renderMarkdown(msg.chatText)"></div>
-              <!-- 记账结果 -->
+              <!-- 正常结果 -->
               <template v-else>
-                <div v-for="(rec, ri) in msg.records" :key="ri" class="parsed-card glass-card-sm">
-                  <div class="parsed-card__header">
-                    <span class="parsed-type" :class="rec.type === 'expense' ? 'type--expense' : 'type--income'">
-                      {{ rec.type === 'expense' ? '支出' : '收入' }}
-                    </span>
-                    <span class="parsed-amount">¥{{ rec.amount.toFixed(2) }}</span>
+                <!-- 记账卡片（当 intent=accounting 时显示） -->
+                <template v-if="msg.records && msg.records.length > 0">
+                  <div v-for="(rec, ri) in msg.records" :key="ri" class="parsed-card glass-card-sm">
+                    <div class="parsed-card__header">
+                      <span class="parsed-type" :class="rec.type === 'expense' ? 'type--expense' : 'type--income'">
+                        {{ rec.type === 'expense' ? '支出' : '收入' }}
+                      </span>
+                      <span class="parsed-amount">¥{{ rec.amount.toFixed(2) }}</span>
+                    </div>
+                    <div class="parsed-card__body">
+                      <div class="parsed-field">
+                        <BaseIcon name="calendar" :size="14" color="var(--text-tertiary)" />
+                        <span>{{ rec.date }}</span>
+                      </div>
+                      <div class="parsed-field">
+                        <BaseIcon :name="getCategoryIcon(rec.categoryId)" :size="14" color="var(--text-tertiary)" />
+                        <span>{{ getCategoryName(rec.categoryId) }}</span>
+                      </div>
+                      <div class="parsed-field" v-if="rec.accountId">
+                        <BaseIcon name="card" :size="14" color="var(--text-tertiary)" />
+                        <span>{{ getAccountName(rec.accountId) }}</span>
+                      </div>
+                      <div class="parsed-field" v-if="rec.note">
+                        <BaseIcon name="note" :size="14" color="var(--text-tertiary)" />
+                        <span>{{ rec.note }}</span>
+                      </div>
+                      <div class="parsed-field" v-if="rec.tags && rec.tags.length">
+                        <BaseIcon name="tag" :size="14" color="var(--text-tertiary)" />
+                        <span>{{ rec.tags.join(', ') }}</span>
+                      </div>
+                      <div class="parsed-field" v-if="rec.mood">
+                        <BaseIcon :name="rec.mood" :size="14" color="var(--text-tertiary)" />
+                        <span>{{ getMoodLabel(rec.mood) }}</span>
+                      </div>
+                    </div>
+                    <div v-if="!msg.saved" class="parsed-card__edit">
+                      <button class="edit-btn" @click="removeRecord(msg, ri)">
+                        <BaseIcon name="trash" :size="14" color="var(--expense)" />
+                      </button>
+                    </div>
                   </div>
-                  <div class="parsed-card__body">
-                    <div class="parsed-field">
-                      <BaseIcon name="calendar" :size="14" color="var(--text-tertiary)" />
-                      <span>{{ rec.date }}</span>
-                    </div>
-                    <div class="parsed-field">
-                      <BaseIcon :name="getCategoryIcon(rec.categoryId)" :size="14" color="var(--text-tertiary)" />
-                      <span>{{ getCategoryName(rec.categoryId) }}</span>
-                    </div>
-                    <div class="parsed-field" v-if="rec.accountId">
-                      <BaseIcon name="card" :size="14" color="var(--text-tertiary)" />
-                      <span>{{ getAccountName(rec.accountId) }}</span>
-                    </div>
-                    <div class="parsed-field" v-if="rec.note">
-                      <BaseIcon name="note" :size="14" color="var(--text-tertiary)" />
-                      <span>{{ rec.note }}</span>
-                    </div>
-                    <div class="parsed-field" v-if="rec.tags && rec.tags.length">
-                      <BaseIcon name="tag" :size="14" color="var(--text-tertiary)" />
-                      <span>{{ rec.tags.join(', ') }}</span>
-                    </div>
-                    <div class="parsed-field" v-if="rec.mood">
-                      <BaseIcon :name="rec.mood" :size="14" color="var(--text-tertiary)" />
-                      <span>{{ getMoodLabel(rec.mood) }}</span>
-                    </div>
-                  </div>
-                  <div v-if="!msg.saved" class="parsed-card__edit">
-                    <button class="edit-btn" @click="removeRecord(msg, ri)">
-                      <BaseIcon name="trash" :size="14" color="var(--expense)" />
+                  <div v-if="!msg.saved && msg.records.length > 0" class="save-bar">
+                    <button class="btn-primary save-btn" @click="saveAll(msg)">
+                      <BaseIcon name="check" :size="16" color="#fff" />
+                      <span>保存全部 ({{ msg.records.length }} 条)</span>
                     </button>
                   </div>
-                </div>
-                <div v-if="!msg.saved && msg.records.length > 0" class="save-bar">
-                  <button class="btn-primary save-btn" @click="saveAll(msg)">
-                    <BaseIcon name="check" :size="16" color="#fff" />
-                    <span>保存全部 ({{ msg.records.length }} 条)</span>
-                  </button>
-                </div>
-                <div v-if="msg.saved" class="saved-notice">
-                  <BaseIcon name="success" :size="16" color="var(--income)" />
-                  <span>已保存</span>
-                </div>
+                  <div v-if="msg.saved" class="saved-notice">
+                    <BaseIcon name="success" :size="16" color="var(--income)" />
+                    <span>已保存</span>
+                  </div>
+                </template>
+                <!-- 模型2 的角色回复（显示在卡片下方或单独显示） -->
+                <div v-if="msg.responseText" class="msg-text msg-markdown ai-response-text"
+                  :class="{ 'ai-response-text--with-cards': msg.records && msg.records.length > 0 }"
+                  v-html="renderMarkdown(msg.responseText)"></div>
+                <!-- 降级：模型2未配置时 chat 意图的默认提示 -->
+                <p v-if="msg.intent === 'chat' && !msg.responseText && !msg.loading" class="msg-text msg-default-chat">
+                  收到啦～ 配置「回复模型」后我就能陪你聊天了 😊
+                </p>
               </template>
             </template>
           </div>
@@ -186,7 +198,7 @@ import { useAppStore } from '@/stores/appStore'
 import { useRecords } from '@/composables/useRecords'
 import { useCategories } from '@/composables/useCategories'
 import { useAccounts } from '@/composables/useAccounts'
-import { sendToAI } from '@/services/llmService'
+import { extractIntent, generateResponse } from '@/services/llmService'
 import { useBrowserSTT, useMediaRecorder, transcribeAudio } from '@/services/sttService'
 import { renderMarkdown } from '@/utils/markdown'
 import PageHeader from '@/components/PageHeader.vue'
@@ -224,7 +236,6 @@ function stopRecordingTimer() {
     clearInterval(recordingTimer)
     recordingTimer = null
   }
-  // 最终精确计算
   if (recordingStartTime.value) {
     recordingDuration.value = Math.max(1, Math.round((Date.now() - recordingStartTime.value) / 1000))
   }
@@ -239,12 +250,10 @@ function formatDuration(sec) {
 
 // ── 语音条辅助 ──
 function barCount(duration) {
-  // 根据时长决定波形条数量，最少5个，最多20个
   return Math.max(5, Math.min(20, Math.floor(duration * 1.5) + 3))
 }
 
 function barHeight(n, duration) {
-  // 伪随机生成波形高度（使用确定性算法确保同一消息始终相同）
   const seed = (n * 7 + duration * 13) % 17
   return 6 + (seed / 17) * 14
 }
@@ -255,7 +264,6 @@ function toggleVoiceExpand(msg) {
 
 function editVoiceText(msg, msgIndex) {
   inputText.value = msg.text
-  // 聚焦输入框
   nextTick(() => {
     const input = document.querySelector('.text-input')
     if (input) input.focus()
@@ -357,7 +365,10 @@ function onEnterKey() {
   sendMessage()
 }
 
-// ── 发送消息（支持 voice 类型）──
+// ──────────────────────────────────────────────
+// 双模型意图路由核心流程
+// ──────────────────────────────────────────────
+
 async function sendMessage(opts = {}) {
   const text = inputText.value.trim()
   if (!text || isSending.value) return
@@ -374,29 +385,70 @@ async function sendMessage(opts = {}) {
   }
   messages.value.push(userMsg)
   chatHistory.value.push({ role: 'user', content: text })
-  // AI 占位
-  messages.value.push({ role: 'ai', loading: true, records: [], error: '', saved: false, chatText: '' })
+
+  // AI 占位（阶段一：分析中）
+  messages.value.push({
+    role: 'ai',
+    loading: true,
+    phase: 'extract',
+    intent: '',
+    records: [],
+    error: '',
+    saved: false,
+    responseText: ''
+  })
   const aiIdx = messages.value.length - 1
   scrollToBottom()
 
   try {
-    const result = await sendToAI(
+    // ── 阶段一：模型1 意图提取 ──
+    const intentResult = await extractIntent(
       appStore.llmBaseUrl, appStore.llmApiKey, appStore.llmModel,
-      text, categories.value, accounts.value,
-      appStore.llmSystemPrompt, chatHistory.value
+      text, categories.value, accounts.value
     )
 
-    if (result.type === 'chat') {
-      messages.value[aiIdx].chatText = result.text
-      messages.value[aiIdx].loading = false
-      chatHistory.value.push({ role: 'assistant', content: result.text })
-    } else {
-      const recs = result.records || []
-      messages.value[aiIdx].records = recs
-      messages.value[aiIdx].loading = false
-      if (recs.length === 0) messages.value[aiIdx].error = 'AI 没有解析出任何记录，请换个表达试试'
-      chatHistory.value.push({ role: 'assistant', content: JSON.stringify(result) })
+    // 填充意图结果
+    messages.value[aiIdx].intent = intentResult.intent
+
+    if (intentResult.intent === 'accounting' && Array.isArray(intentResult.records)) {
+      // 记账：显示卡片（等用户手动保存）
+      messages.value[aiIdx].records = intentResult.records
+      if (intentResult.records.length === 0) {
+        messages.value[aiIdx].error = 'AI 没有解析出任何记录，请换个表达试试'
+      }
     }
+
+    // ── 阶段二：模型2 角色回复（如已配置）──
+    if (appStore.isLLM2Configured()) {
+      messages.value[aiIdx].phase = 'respond'
+      // 不需要重新标记 loading=true，它还在 loading 状态
+      scrollToBottom()
+
+      try {
+        const responseText = await generateResponse(
+          appStore.llm2BaseUrl, appStore.llm2ApiKey, appStore.llm2Model,
+          intentResult, text, appStore.llmSystemPrompt, chatHistory.value
+        )
+        messages.value[aiIdx].responseText = responseText
+        chatHistory.value.push({ role: 'assistant', content: responseText })
+      } catch (e2) {
+        // 模型2 失败不影响记账卡片的显示
+        console.warn('模型2回复失败:', e2.message)
+        // 如果是 chat 意图且模型2失败，设置一个默认回复
+        if (intentResult.intent === 'chat') {
+          messages.value[aiIdx].responseText = '回复生成失败了，不过我还在呢～'
+        }
+      }
+    } else {
+      // 模型2 未配置
+      if (intentResult.intent === 'accounting') {
+        // 记账模式：卡片已经有了，不需要回复
+        chatHistory.value.push({ role: 'assistant', content: JSON.stringify(intentResult) })
+      }
+      // chat 模式：会显示降级提示文本
+    }
+
+    messages.value[aiIdx].loading = false
   } catch (e) {
     messages.value[aiIdx].loading = false
     messages.value[aiIdx].error = `解析失败: ${e.message}`
@@ -417,33 +469,66 @@ async function rerollMessage(aiMsgIndex) {
 
   const userText = messages.value[userMsgIndex].text
 
+  // 移除旧 AI 消息
   messages.value.splice(aiMsgIndex, 1)
   const lastAssistantIdx = chatHistory.value.findLastIndex(h => h.role === 'assistant')
   if (lastAssistantIdx >= 0) chatHistory.value.splice(lastAssistantIdx, 1)
 
   isSending.value = true
-  messages.value.push({ role: 'ai', loading: true, records: [], error: '', saved: false, chatText: '' })
+  messages.value.push({
+    role: 'ai',
+    loading: true,
+    phase: 'extract',
+    intent: '',
+    records: [],
+    error: '',
+    saved: false,
+    responseText: ''
+  })
   const newAiIdx = messages.value.length - 1
   scrollToBottom()
 
   try {
-    const result = await sendToAI(
+    // 阶段一：重新提取
+    const intentResult = await extractIntent(
       appStore.llmBaseUrl, appStore.llmApiKey, appStore.llmModel,
-      userText, categories.value, accounts.value,
-      appStore.llmSystemPrompt, chatHistory.value
+      userText, categories.value, accounts.value
     )
 
-    if (result.type === 'chat') {
-      messages.value[newAiIdx].chatText = result.text
-      messages.value[newAiIdx].loading = false
-      chatHistory.value.push({ role: 'assistant', content: result.text })
-    } else {
-      const recs = result.records || []
-      messages.value[newAiIdx].records = recs
-      messages.value[newAiIdx].loading = false
-      if (recs.length === 0) messages.value[newAiIdx].error = 'AI 没有解析出任何记录，请换个表达试试'
-      chatHistory.value.push({ role: 'assistant', content: JSON.stringify(result) })
+    messages.value[newAiIdx].intent = intentResult.intent
+
+    if (intentResult.intent === 'accounting' && Array.isArray(intentResult.records)) {
+      messages.value[newAiIdx].records = intentResult.records
+      if (intentResult.records.length === 0) {
+        messages.value[newAiIdx].error = 'AI 没有解析出任何记录，请换个表达试试'
+      }
     }
+
+    // 阶段二：重新回复
+    if (appStore.isLLM2Configured()) {
+      messages.value[newAiIdx].phase = 'respond'
+      scrollToBottom()
+
+      try {
+        const responseText = await generateResponse(
+          appStore.llm2BaseUrl, appStore.llm2ApiKey, appStore.llm2Model,
+          intentResult, userText, appStore.llmSystemPrompt, chatHistory.value
+        )
+        messages.value[newAiIdx].responseText = responseText
+        chatHistory.value.push({ role: 'assistant', content: responseText })
+      } catch (e2) {
+        console.warn('模型2回复失败:', e2.message)
+        if (intentResult.intent === 'chat') {
+          messages.value[newAiIdx].responseText = '回复生成失败了，不过我还在呢～'
+        }
+      }
+    } else {
+      if (intentResult.intent === 'accounting') {
+        chatHistory.value.push({ role: 'assistant', content: JSON.stringify(intentResult) })
+      }
+    }
+
+    messages.value[newAiIdx].loading = false
   } catch (e) {
     messages.value[newAiIdx].loading = false
     messages.value[newAiIdx].error = `解析失败: ${e.message}`
@@ -452,7 +537,7 @@ async function rerollMessage(aiMsgIndex) {
   scrollToBottom()
 }
 
-// ── 保存记录 ──
+// ── 保存记录（手动） ──
 async function saveAll(msg) {
   try {
     for (const rec of msg.records) {
@@ -650,6 +735,18 @@ async function stopVoice() {
 .msg-text { font-size: var(--text-sm); line-height: 1.5; }
 .msg-loading { color: var(--text-tertiary); }
 .msg-error { color: var(--expense); font-size: var(--text-xs); }
+
+/* ── 模型2回复文本（在卡片下方时有分隔线） ── */
+.ai-response-text--with-cards {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid rgba(255,181,194,0.15);
+}
+
+/* ── 降级提示 ── */
+.msg-default-chat {
+  color: var(--text-tertiary); font-size: var(--text-xs); font-style: italic;
+}
 
 /* ── 语音气泡 ── */
 .voice-bubble {

@@ -2,12 +2,13 @@
   <div class="ai-settings safe-top">
     <PageHeader title="AI 设置" showBack />
 
-    <!-- LLM 配置 -->
+    <!-- 模型1：提取模型 -->
     <section class="settings-section animate-fade-in-up">
       <h3 class="section-title">
         <BaseIcon name="ai" :size="18" color="var(--pink)" />
-        <span>LLM 大模型</span>
+        <span>🧠 提取模型（模型 1）</span>
       </h3>
+      <p class="section-desc">负责意图判断和记账数据提取，无人设、纯 JSON 输出</p>
       <div class="form-group">
         <label class="form-label">API 地址</label>
         <input v-model="llmUrl" type="url" class="form-input" placeholder="https://api.openai.com" />
@@ -37,17 +38,66 @@
       <div v-if="llmStatus" class="status-msg" :class="llmStatusOk ? 'status--ok' : 'status--err'">{{ llmStatus }}</div>
     </section>
 
-    <!-- AI 人设 -->
+    <!-- 模型2：回复模型 -->
+    <section class="settings-section animate-fade-in-up delay-1">
+      <h3 class="section-title">
+        <BaseIcon name="sparkle" :size="18" color="var(--pink)" />
+        <span>🎭 回复模型（模型 2）</span>
+      </h3>
+      <p class="section-desc">负责角色扮演回复，有人设、纯自然语言。<strong>可选</strong>，未配置则只显示记账卡片</p>
+
+      <!-- 复用模型1配置开关 -->
+      <div class="reuse-toggle" @click="reuseModel1 = !reuseModel1">
+        <div class="toggle-track" :class="{ 'toggle-track--on': reuseModel1 }">
+          <div class="toggle-thumb"></div>
+        </div>
+        <span class="toggle-label">复用模型 1 的 API 地址和 Key</span>
+      </div>
+
+      <template v-if="!reuseModel1">
+        <div class="form-group">
+          <label class="form-label">API 地址</label>
+          <input v-model="llm2Url" type="url" class="form-input" placeholder="https://api.openai.com" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">API Key</label>
+          <input v-model="llm2Key" type="password" class="form-input" placeholder="sk-..." />
+        </div>
+      </template>
+
+      <div class="form-group">
+        <label class="form-label">模型</label>
+        <div class="model-row">
+          <select v-model="llm2ModelVal" class="form-select">
+            <option value="" disabled>请先拉取模型列表</option>
+            <option v-for="m in llm2Models" :key="m" :value="m">{{ m }}</option>
+          </select>
+          <button class="btn-icon" @click="loadLLM2Models" :disabled="llm2Loading">
+            <BaseIcon name="refresh" :size="16" :color="llm2Loading ? 'var(--text-tertiary)' : 'var(--pink)'" />
+          </button>
+        </div>
+      </div>
+      <div class="action-row">
+        <button class="btn-secondary" @click="testLLM2" :disabled="llm2Testing">
+          {{ llm2Testing ? '测试中...' : '测试连接' }}
+        </button>
+        <button class="btn-primary" @click="saveLLM2">保存</button>
+      </div>
+      <div v-if="llm2Status" class="status-msg" :class="llm2StatusOk ? 'status--ok' : 'status--err'">{{ llm2Status }}</div>
+    </section>
+
+    <!-- AI 人设（仅影响模型2） -->
     <section class="settings-section animate-fade-in-up delay-1">
       <h3 class="section-title">
         <BaseIcon name="sparkle" :size="18" color="var(--pink)" />
         <span>AI 人设</span>
       </h3>
+      <p class="section-desc">仅影响模型 2 的回复风格</p>
       <div class="form-group">
         <label class="form-label">自定义提示词</label>
         <textarea v-model="personaPrompt" class="form-input form-textarea" rows="4"
           placeholder="例如：你是一只可爱的猫娘，说话会带喵～&#10;或者：你是一个严肃的财务管家，时刻提醒我省钱"></textarea>
-        <p class="form-hint">设定 AI 的性格和说话风格，闲聊时会按此人设回复</p>
+        <p class="form-hint">设定 AI 的性格和说话风格，记账时会锐评，闲聊时会陪伴</p>
       </div>
       <button class="btn-primary" @click="savePersona">保存</button>
     </section>
@@ -158,7 +208,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useAppStore } from '@/stores/appStore'
 import { fetchModels, testConnection } from '@/services/llmService'
 import { fetchSTTModels, testSTTConnection } from '@/services/sttService'
@@ -169,7 +219,7 @@ import AppModal from '@/components/AppModal.vue'
 
 const appStore = useAppStore()
 
-// ── LLM ──
+// ── 模型1（提取脑） ──
 const llmUrl = ref(appStore.llmBaseUrl)
 const llmKey = ref(appStore.llmApiKey)
 const llmModel = ref(appStore.llmModel)
@@ -207,7 +257,70 @@ function saveLLM() {
   appStore.llmBaseUrl = llmUrl.value
   appStore.llmApiKey = llmKey.value
   appStore.llmModel = llmModel.value
-  showToastMsg('LLM 配置已保存')
+  showToastMsg('模型 1（提取脑）配置已保存')
+}
+
+// ── 模型2（回复脑） ──
+const reuseModel1 = ref(false)
+const llm2Url = ref(appStore.llm2BaseUrl)
+const llm2Key = ref(appStore.llm2ApiKey)
+const llm2ModelVal = ref(appStore.llm2Model)
+const llm2Models = ref([])
+const llm2Loading = ref(false)
+const llm2Testing = ref(false)
+const llm2Status = ref('')
+const llm2StatusOk = ref(false)
+
+// 实际使用的 URL 和 Key（考虑复用开关）
+const effective2Url = computed(() => reuseModel1.value ? llmUrl.value : llm2Url.value)
+const effective2Key = computed(() => reuseModel1.value ? llmKey.value : llm2Key.value)
+
+// 初始化时检测是否复用
+onMounted(() => {
+  if (llmModel.value) llmModels.value = [llmModel.value]
+  if (llm2ModelVal.value) llm2Models.value = [llm2ModelVal.value]
+  if (sttModelVal.value) sttModels.value = [sttModelVal.value]
+
+  // 自动判断是否复用
+  if (appStore.llm2BaseUrl && appStore.llm2BaseUrl === appStore.llmBaseUrl
+      && appStore.llm2ApiKey === appStore.llmApiKey) {
+    reuseModel1.value = true
+  }
+})
+
+async function loadLLM2Models() {
+  const url = effective2Url.value
+  const key = effective2Key.value
+  if (!url || !key) { llm2Status.value = '请先填写地址和 Key（或开启复用）'; llm2StatusOk.value = false; return }
+  llm2Loading.value = true; llm2Status.value = ''
+  try {
+    llm2Models.value = await fetchModels(url, key)
+    llm2Status.value = `已获取 ${llm2Models.value.length} 个模型`
+    llm2StatusOk.value = true
+    if (llm2Models.value.length > 0 && !llm2ModelVal.value) llm2ModelVal.value = llm2Models.value[0]
+  } catch (e) {
+    llm2Status.value = `拉取失败: ${e.message}`; llm2StatusOk.value = false
+  } finally { llm2Loading.value = false }
+}
+
+async function testLLM2() {
+  const url = effective2Url.value
+  const key = effective2Key.value
+  if (!url || !key || !llm2ModelVal.value) { llm2Status.value = '请完善配置'; llm2StatusOk.value = false; return }
+  llm2Testing.value = true; llm2Status.value = ''
+  try {
+    const reply = await testConnection(url, key, llm2ModelVal.value)
+    llm2Status.value = `连接成功 — ${reply}`; llm2StatusOk.value = true
+  } catch (e) {
+    llm2Status.value = `连接失败: ${e.message}`; llm2StatusOk.value = false
+  } finally { llm2Testing.value = false }
+}
+
+function saveLLM2() {
+  appStore.llm2BaseUrl = effective2Url.value
+  appStore.llm2ApiKey = effective2Key.value
+  appStore.llm2Model = llm2ModelVal.value
+  showToastMsg('模型 2（回复脑）配置已保存')
 }
 
 // ── 人设 ──
@@ -269,11 +382,6 @@ function showToastMsg(msg, type = 'success') {
   toastMsg.value = msg; toastType.value = type; showToast.value = true
 }
 
-onMounted(() => {
-  if (llmModel.value) llmModels.value = [llmModel.value]
-  if (sttModelVal.value) sttModels.value = [sttModelVal.value]
-})
-
 // ── AI 头像裁剪 ──
 const aiAvatarInput = ref(null)
 const showCropModal = ref(false)
@@ -328,25 +436,16 @@ function onCropMouseDown(e) {
 function applyCrop() {
   const img = new Image()
   img.onload = () => {
-    const VP = 240   // viewport CSS size (px)
-    const R = 80     // crop circle radius (px) — ring is 160x160
+    const VP = 240
+    const R = 80
     const scale = cropScale.value / 100
 
-    // .crop-img uses width:100% height:auto, so the image fills width
-    // and height scales proportionally
     const imgAspect = img.width / img.height
     const fitW = VP
     const fitH = VP / imgAspect
 
-    // transform-origin is 0 0, so translate(cropX, cropY) scale(s):
-    // screenX = px / img.width * fitW * scale + cropX
-    // screenY = py / img.height * fitH * scale + cropY
-    //
-    // crop ring center is at (VP/2, VP/2), solve for source pixel:
     const cx = (VP / 2 - cropX.value) / scale / fitW * img.width
     const cy = (VP / 2 - cropY.value) / scale / fitH * img.height
-
-    // crop circle radius in source image pixels
     const rImg = R / scale / fitW * img.width
 
     const canvas = document.createElement('canvas')
@@ -376,7 +475,12 @@ function applyCrop() {
 .section-title {
   display: flex; align-items: center; gap: var(--space-sm);
   font-size: var(--text-lg); font-weight: 700;
-  margin-bottom: var(--space-lg); color: var(--text-primary);
+  margin-bottom: var(--space-sm); color: var(--text-primary);
+}
+
+.section-desc {
+  font-size: var(--text-xs); color: var(--text-tertiary);
+  margin-bottom: var(--space-lg); line-height: 1.4;
 }
 
 .form-group { margin-bottom: var(--space-md); }
@@ -424,6 +528,38 @@ function applyCrop() {
 }
 .status--ok { background: rgba(125,203,168,0.15); color: var(--income, #5BB88A); }
 .status--err { background: rgba(255,143,163,0.15); color: var(--expense, #FF8FA3); }
+
+/* ── 复用开关 ── */
+.reuse-toggle {
+  display: flex; align-items: center; gap: var(--space-sm);
+  margin-bottom: var(--space-md); cursor: pointer;
+  padding: var(--space-sm) 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.toggle-track {
+  width: 40px; height: 22px; border-radius: 11px;
+  background: var(--bg-secondary);
+  border: 1.5px solid var(--border-color, rgba(255,181,194,0.2));
+  position: relative; transition: all 0.25s ease;
+  flex-shrink: 0;
+}
+.toggle-track--on {
+  background: linear-gradient(135deg, var(--pink), var(--lilac));
+  border-color: transparent;
+}
+.toggle-thumb {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; position: absolute;
+  top: 2px; left: 2px;
+  transition: transform 0.25s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+.toggle-track--on .toggle-thumb {
+  transform: translateX(18px);
+}
+.toggle-label {
+  font-size: var(--text-sm); color: var(--text-secondary);
+}
 
 .mode-switch { display: flex; gap: var(--space-xs); }
 .mode-btn {
