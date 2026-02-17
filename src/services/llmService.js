@@ -67,12 +67,15 @@ export async function sendToAI(baseUrl, apiKey, model, text, categories, account
     const systemPrompt = `你是一个智能助手，既能帮用户记账，也能正常聊天。${persona}
 今天是 ${today}（星期${dow}）。
 
+【最重要的规则】
+你的回复必须是且仅是一个纯 JSON 对象。绝对不要在 JSON 前后添加任何解释、推理、思考过程或其他文字。不要使用 markdown 代码块包裹。直接输出 JSON。
+
 【判断规则】
 - 如果用户的话涉及 花钱/收入/转账/付款/买东西/吃饭消费 等记账相关内容 → 进入"记账模式"
 - 否则 → 进入"聊天模式"，像朋友一样自然地回复
 
 【记账模式返回格式】
-返回纯 JSON（不要 markdown 代码块）：
+直接返回这个 JSON（不要有任何其他文字）：
 {"type":"records","records":[{"amount":数字,"type":"expense或income","categoryId":分类id,"date":"YYYY-MM-DD","accountId":账户id,"note":"备注","tags":["标签"],"mood":"情绪key"}]}
 
 可用分类：${catList}
@@ -85,13 +88,17 @@ export async function sendToAI(baseUrl, apiKey, model, text, categories, account
 3. 提到"欠"/"应收" → 额外生成一条 income 应收记录
 4. 分类匹配不到就用最接近的，实在没有用"其他"
 5. 金额必须 > 0，accountId 默认 ${accounts[0]?.id || 1}
+6. 一条消息中可能包含多笔消费，请全部识别并生成多个 record
 
 【聊天模式返回格式】
-返回纯 JSON：{"type":"chat","text":"你的回复内容"}`
+直接返回这个 JSON（不要有任何其他文字）：
+{"type":"chat","text":"你的回复内容"}
+
+再次强调：只输出 JSON，不要输出任何思考过程！`
 
     const messages = [
         { role: 'system', content: systemPrompt },
-        ...chatHistory.slice(-10),  // 保留最近10条对话作为上下文
+        ...chatHistory.slice(-10),
         { role: 'user', content: text }
     ]
 
@@ -114,23 +121,8 @@ export async function sendToAI(baseUrl, apiKey, model, text, categories, account
     const data = await res.json()
     const content = data.choices?.[0]?.message?.content || ''
 
-    // 尝试提取 JSON
-    let parsed
-    try {
-        parsed = JSON.parse(content)
-    } catch {
-        const match = content.match(/```(?:json)?\s*([\s\S]*?)```/)
-        if (match) {
-            try { parsed = JSON.parse(match[1].trim()) } catch { /* fall through */ }
-        }
-        if (!parsed) {
-            const jsonStart = content.indexOf('{')
-            const jsonEnd = content.lastIndexOf('}')
-            if (jsonStart !== -1 && jsonEnd > jsonStart) {
-                try { parsed = JSON.parse(content.slice(jsonStart, jsonEnd + 1)) } catch { /* fall through */ }
-            }
-        }
-    }
+    // 尝试提取 JSON — 多种策略
+    let parsed = tryParseJSON(content)
 
     // 如果成功解析 JSON 且有 type 字段
     if (parsed && parsed.type === 'records' && Array.isArray(parsed.records)) {
@@ -147,6 +139,67 @@ export async function sendToAI(baseUrl, apiKey, model, text, categories, account
     // JSON 解析全失败，当作聊天回复
     return { type: 'chat', text: content || '我不太理解，请再说一次～' }
 }
+
+/**
+ * 智能提取 JSON — 支持多种模型输出风格
+ * 1. 直接 parse 整个字符串
+ * 2. 提取 markdown 代码块中的 JSON
+ * 3. 用括号匹配找到最大的有效 JSON 对象
+ */
+function tryParseJSON(content) {
+    if (!content) return null
+
+    // 策略 1：直接解析
+    try {
+        return JSON.parse(content.trim())
+    } catch { /* continue */ }
+
+    // 策略 2：提取 markdown 代码块
+    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/)
+    if (codeBlockMatch) {
+        try { return JSON.parse(codeBlockMatch[1].trim()) } catch { /* continue */ }
+    }
+
+    // 策略 3：括号匹配法 — 找到每一个 { 开头，用括号计数找到匹配的 }
+    // 从所有候选中选择最大的有效 JSON
+    let bestParsed = null
+    let bestLength = 0
+
+    for (let i = 0; i < content.length; i++) {
+        if (content[i] === '{') {
+            let depth = 0
+            let inString = false
+            let escape = false
+            for (let j = i; j < content.length; j++) {
+                const ch = content[j]
+                if (escape) { escape = false; continue }
+                if (ch === '\\' && inString) { escape = true; continue }
+                if (ch === '"' && !escape) { inString = !inString; continue }
+                if (inString) continue
+                if (ch === '{') depth++
+                else if (ch === '}') {
+                    depth--
+                    if (depth === 0) {
+                        const candidate = content.slice(i, j + 1)
+                        if (candidate.length > bestLength) {
+                            try {
+                                const obj = JSON.parse(candidate)
+                                if (obj && typeof obj === 'object') {
+                                    bestParsed = obj
+                                    bestLength = candidate.length
+                                }
+                            } catch { /* try next */ }
+                        }
+                        break
+                    }
+                }
+            }
+        }
+    }
+
+    return bestParsed
+}
+
 
 /** 保留旧接口的兼容性 */
 export async function parseRecord(baseUrl, apiKey, model, text, categories, accounts) {
